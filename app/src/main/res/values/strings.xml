@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">DeepfakeDetection</string>
+    <string name="upload_image">Upload Image</string>
+    <string name="upload_video">Upload Video</string>
+    <string name="result_text">Result will be shown here</string>
+    <string name="image_uploaded_message">Image Uploaded Successfully</string>
+</resources>
