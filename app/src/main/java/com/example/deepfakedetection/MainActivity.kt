@@ -6,20 +6,38 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,13 +45,20 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.scale
 import com.example.deepfakedetection.ui.theme.DeepfakeDetectionTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
-import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Locale
-import androidx.core.graphics.scale
+
+sealed class Screen {
+    data object Upload : Screen()
+    data object Progress : Screen()
+    data object Results : Screen()
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -57,181 +82,213 @@ fun MainScreen() {
     val context = LocalContext.current
     var tflite by remember { mutableStateOf<Interpreter?>(null) }
     var isModelLoaded by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf(listOf<FrameResult>()) }
+
+    var screen by remember { mutableStateOf<Screen>(Screen.Upload) }
+    var selectedUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedType by remember { mutableStateOf("") }
+    var progress by remember { mutableFloatStateOf(0f) }
+    var statusText by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val assetManager = context.assets
+                val modelFd = assetManager.openFd("model/efficientnet_lite_l4_model.tflite")
+                val inputStream = modelFd.createInputStream()
+                val modelBytes = inputStream.readBytes()
+                val byteBuffer = ByteBuffer.allocateDirect(modelBytes.size).apply {
+                    order(ByteOrder.nativeOrder())
+                    put(modelBytes)
+                }
+                val options = Interpreter.Options()
+                tflite = Interpreter(byteBuffer, options)
+                isModelLoaded = true
+            } catch (e: Exception) {
+                errorMessage = "Failed to load model"
+            }
+        }
+    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            isLoading = true
+            selectedUri = it
+            selectedType = "image"
             errorMessage = null
-            results = emptyList()
-            try {
-                val inputStream: InputStream? = context.contentResolver.openInputStream(it)
-                val bitmap = BitmapFactory.decodeStream(inputStream)
-                inputStream?.close()
-                val scaledBitmap = bitmap.scale(256, 256, filter = true)
-                val predictions = tflite?.let { interpreter ->
-                    runInference(interpreter, scaledBitmap)
-                }
-                results = listOf(
-                    FrameResult(
-                        label = "Uploaded Image",
-                        bitmap = scaledBitmap,
-                        probabilities = predictions?.toList()
-                    )
-                )
-            } catch (e: Exception) {
-                errorMessage = "Failed to upload image"
-            }
-            isLoading = false
+            screen = Screen.Progress
         }
     }
-
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            isLoading = true
+            selectedUri = it
+            selectedType = "video"
             errorMessage = null
-            results = emptyList()
-            try {
-                val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, it)
-                val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                val durationMs = durationStr?.toLongOrNull() ?: 0L
-                val frameResults = mutableListOf<FrameResult>()
-                for (timeMs in 0 until durationMs step 1000) {
-                    val frameBitmap = retriever.getFrameAtTime(timeMs * 1000)
-                    frameBitmap?.let { bitmap ->
-                        val scaledBitmap = bitmap.scale(256, 256, filter = true)
+            screen = Screen.Progress
+        }
+    }
+
+    LaunchedEffect(selectedUri) {
+        selectedUri?.let { uri ->
+            withContext(Dispatchers.Default) {
+                try {
+                    if (selectedType == "image") {
+                        statusText = "Loading image..."
+                        progress = 0.1f
+                        val bitmap = withContext(Dispatchers.IO) {
+                            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+                        } ?: throw Exception("Failed to load image")
+                        statusText = "Processing image..."
+                        progress = 0.4f
+                        val scaledBitmap = withContext(Dispatchers.Default) { bitmap.scale(256, 256, filter = true) }
                         val predictions = tflite?.let { interpreter ->
-                            runInference(interpreter, scaledBitmap)
+                            withContext(Dispatchers.Default) { runInference(interpreter, scaledBitmap) }
                         }
-                        frameResults.add(
+                        progress = 1f
+                        results = listOf(
                             FrameResult(
-                                label = "Frame at ${timeMs / 1000} sec",
+                                label = "Uploaded Image",
                                 bitmap = scaledBitmap,
                                 probabilities = predictions?.toList()
                             )
                         )
+                    } else {
+                        val retriever = withContext(Dispatchers.IO) {
+                            MediaMetadataRetriever().apply { setDataSource(context, uri) }
+                        }
+                        val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        val frames = mutableListOf<FrameResult>()
+                        val total = (durationMs / 1000).toInt().coerceAtLeast(1)
+                        for (i in 0 until total) {
+                            statusText = "Processing frame ${i + 1}/$total"
+                            progress = (i + 1) / total.toFloat()
+                            val frameBitmap = withContext(Dispatchers.IO) { retriever.getFrameAtTime((i * 1000) * 1000L) }
+                            frameBitmap?.let {
+                                val scaled = withContext(Dispatchers.Default) { it.scale(256, 256, filter = true) }
+                                val framePredictions = tflite?.let { interpreter ->
+                                    withContext(Dispatchers.Default) { runInference(interpreter, scaled) }
+                                }
+                                frames.add(FrameResult("Frame at ${i + 1} sec", scaled, framePredictions?.toList()))
+                            }
+                        }
+                        withContext(Dispatchers.IO) { retriever.release() }
+                        progress = 1f
+                        results = frames
                     }
-                }
-                retriever.release()
-                results = frameResults
-            } catch (e: Exception) {
-                errorMessage = "Failed to process video"
-            }
-            isLoading = false
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        try {
-            val assetManager = context.assets
-            val modelFd = assetManager.openFd("model/efficientnet_lite_l4_model.tflite")
-            val inputStream = modelFd.createInputStream()
-            val modelBytes = inputStream.readBytes()
-            val byteBuffer = ByteBuffer.allocateDirect(modelBytes.size).apply {
-                order(ByteOrder.nativeOrder())
-                put(modelBytes)
-            }
-            val options = Interpreter.Options()
-            tflite = Interpreter(byteBuffer, options)
-            isModelLoaded = true
-        } catch (e: Exception) {
-            errorMessage = "Failed to load model"
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 24.dp, vertical = 16.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Top half: Title, subtitle, and upload buttons centered vertically
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Deepfake Detection",
-                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Upload an image or video to detect deepfakes using advanced AI.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
-                )
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Button(
-                        onClick = { imagePickerLauncher.launch("image/*") },
-                        enabled = isModelLoaded && !isLoading,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Upload Image")
-                    }
-                    Button(
-                        onClick = { videoPickerLauncher.launch("video/*") },
-                        enabled = isModelLoaded && !isLoading,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Upload Video")
-                    }
+                    screen = Screen.Results
+                } catch (e: Exception) {
+                    errorMessage = "Failed to process media"
+                    screen = Screen.Upload
                 }
             }
         }
+    }
 
-        // Bottom half: Progress, errors, and results
-        AnimatedVisibility(
-            visible = isLoading,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
+    when (screen) {
+        is Screen.Upload -> {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 32.dp),
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                CircularProgressIndicator()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Deepfake Detection",
+                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Upload an image or video to detect deepfakes using advanced AI.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
+                        )
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Button(
+                                onClick = { imagePickerLauncher.launch("image/*") },
+                                enabled = isModelLoaded,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Upload Image")
+                            }
+                            Button(
+                                onClick = { videoPickerLauncher.launch("video/*") },
+                                enabled = isModelLoaded,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Upload Video")
+                            }
+                        }
+                    }
+                }
+                errorMessage?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 24.dp)
+                    )
+                }
+            }
+        }
+        is Screen.Progress -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text(
-                    text = "Processing...",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 8.dp)
+                    text = statusText,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Spacer(Modifier.height(16.dp))
+                LinearProgressIndicator(progress = { progress })
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = String.format(Locale.US, "%.0f%%", progress * 100),
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
-
-        errorMessage?.let {
-            Text(
-                text = it,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 24.dp)
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        results.forEach { frameResult ->
-            FrameResultCard(frameResult)
-            Spacer(Modifier.height(16.dp))
+        is Screen.Results -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                results.forEach { frameResult ->
+                    FrameResultCard(frameResult)
+                    Spacer(Modifier.height(16.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = { screen = Screen.Upload }
+                ) {
+                    Text("Analyze Another")
+                }
+            }
         }
     }
 }
@@ -265,10 +322,10 @@ fun FrameResultCard(result: FrameResult) {
                     .clip(RoundedCornerShape(12.dp))
             )
             Spacer(Modifier.height(12.dp))
-            result.probabilities?.let { probs ->
+            result.probabilities?.let { probabilitiesList ->
                 Column {
                     labels.forEachIndexed { i, label ->
-                        val percent = (probs.getOrNull(i) ?: 0f) * 100
+                        val percent = (probabilitiesList.getOrNull(i) ?: 0f) * 100
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(vertical = 2.dp)
@@ -279,7 +336,7 @@ fun FrameResultCard(result: FrameResult) {
                                 modifier = Modifier.width(80.dp)
                             )
                             LinearProgressIndicator(
-                                progress = { (probs.getOrNull(i) ?: 0f).coerceIn(0f, 1f) },
+                                progress = { (probabilitiesList.getOrNull(i) ?: 0f).coerceIn(0f, 1f) },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(6.dp)
