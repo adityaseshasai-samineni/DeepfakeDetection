@@ -279,7 +279,7 @@ fun FrameResultCard(result: FrameResult) {
                                 modifier = Modifier.width(80.dp)
                             )
                             LinearProgressIndicator(
-                                progress = (probs.getOrNull(i) ?: 0f).coerceIn(0f, 1f),
+                                progress = { (probs.getOrNull(i) ?: 0f).coerceIn(0f, 1f) },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(6.dp)
