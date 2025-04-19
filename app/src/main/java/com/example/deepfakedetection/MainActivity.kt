@@ -9,28 +9,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,24 +19,21 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.core.graphics.scale
+import com.example.deepfakedetection.screens.ProgressScreen
+import com.example.deepfakedetection.screens.ResultsScreen
+import com.example.deepfakedetection.screens.UploadScreen
 import com.example.deepfakedetection.ui.theme.DeepfakeDetectionTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.Locale
 
 sealed class Screen {
     data object Upload : Screen()
@@ -197,183 +175,25 @@ fun MainScreen() {
     }
 
     when (screen) {
-        is Screen.Upload -> {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "Deepfake Detection",
-                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Upload an image or video to detect deepfakes using advanced AI.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
-                        )
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Button(
-                                onClick = { imagePickerLauncher.launch("image/*") },
-                                enabled = isModelLoaded,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Upload Image")
-                            }
-                            Button(
-                                onClick = { videoPickerLauncher.launch("video/*") },
-                                enabled = isModelLoaded,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Upload Video")
-                            }
-                        }
-                    }
-                }
-                errorMessage?.let {
-                    Text(
-                        text = it,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 24.dp)
-                    )
-                }
+        is Screen.Upload -> UploadScreen(
+            isModelLoaded = isModelLoaded,
+            errorMessage = errorMessage,
+            onImageSelected = { imagePickerLauncher.launch("image/*") },
+            onVideoSelected = { videoPickerLauncher.launch("video/*") }
+        )
+        is Screen.Progress -> ProgressScreen(
+            statusText = statusText,
+            progress = progress,
+            onCancel = {
+                processingJob?.cancel()
+                selectedUri = null
+                screen = Screen.Upload
             }
-        }
-        is Screen.Progress -> {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.bodyLarge
-                )
-                Spacer(Modifier.height(16.dp))
-                LinearProgressIndicator(progress = { progress })
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = String.format(Locale.US, "%.0f%%", progress * 100),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(Modifier.height(16.dp))
-                Button(onClick = {
-                    processingJob?.cancel()
-                    selectedUri = null
-                    screen = Screen.Upload
-                }) {
-                    Text("Cancel")
-                }
-            }
-        }
-        is Screen.Results -> {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Button(
-                    onClick = { screen = Screen.Upload }
-                ) {
-                    Text("Analyze Another")
-                }
-                Spacer(Modifier.height(16.dp))
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    results.forEach { frameResult ->
-                        FrameResultCard(frameResult)
-                        Spacer(Modifier.height(16.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun FrameResultCard(result: FrameResult) {
-    val labels = listOf("Real", "FE_Fake", "EFS_Fake", "FR_Fake", "FS_Fake")
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp)),
-        elevation = CardDefaults.cardElevation(6.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(16.dp)
-        ) {
-            Text(
-                text = result.label,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(12.dp))
-            Image(
-                bitmap = result.bitmap.asImageBitmap(),
-                contentDescription = result.label,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp)
-                    .clip(RoundedCornerShape(12.dp))
-            )
-            Spacer(Modifier.height(12.dp))
-            result.probabilities?.let { probabilitiesList ->
-                Column {
-                    labels.forEachIndexed { i, label ->
-                        val percent = (probabilitiesList.getOrNull(i) ?: 0f) * 100
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.width(80.dp)
-                            )
-                            LinearProgressIndicator(
-                                progress = { (probabilitiesList.getOrNull(i) ?: 0f).coerceIn(0f, 1f) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                            )
-                            Text(
-                                text = String.format(Locale.US, " %.1f%%", percent),
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(start = 8.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        )
+        is Screen.Results -> ResultsScreen(
+            results = results,
+            onAnalyzeAnother = { screen = Screen.Upload }
+        )
     }
 }
 
