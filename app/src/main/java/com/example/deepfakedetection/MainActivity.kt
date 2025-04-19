@@ -161,18 +161,19 @@ fun MainScreen() {
                             MediaMetadataRetriever().apply { setDataSource(context, uri) }
                         }
                         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        val totalSeconds = (durationMs / 1000).toInt().coerceAtLeast(1)
+                        val frameIndices = if (totalSeconds > 50) (0 until totalSeconds).shuffled().take(50) else (0 until totalSeconds).toList()
                         val frames = mutableListOf<FrameResult>()
-                        val total = (durationMs / 1000).toInt().coerceAtLeast(1)
-                        for (i in 0 until total) {
-                            statusText = "Processing frame ${i + 1}/$total"
-                            progress = (i + 1) / total.toFloat()
-                            val frameBitmap = withContext(Dispatchers.IO) { retriever.getFrameAtTime((i * 1000) * 1000L) }
+                        for ((idx, sec) in frameIndices.withIndex()) {
+                            statusText = "Processing frame ${idx + 1}/${frameIndices.size}"
+                            progress = (idx + 1) / frameIndices.size.toFloat()
+                            val frameBitmap = withContext(Dispatchers.IO) { retriever.getFrameAtTime(sec * 1_000_000L) }
                             frameBitmap?.let {
                                 val scaled = withContext(Dispatchers.Default) { it.scale(256, 256, filter = true) }
                                 val framePredictions = tflite?.let { interpreter ->
                                     withContext(Dispatchers.Default) { runInference(interpreter, scaled) }
                                 }
-                                frames.add(FrameResult("Frame at ${i + 1} sec", scaled, framePredictions?.toList()))
+                                frames.add(FrameResult("Frame at ${sec + 1} sec", scaled, framePredictions?.toList()))
                             }
                         }
                         withContext(Dispatchers.IO) { retriever.release() }
