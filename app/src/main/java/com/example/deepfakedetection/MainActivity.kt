@@ -49,6 +49,9 @@ import androidx.core.graphics.scale
 import com.example.deepfakedetection.ui.theme.DeepfakeDetectionTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -90,6 +93,7 @@ fun MainScreen() {
     var selectedType by remember { mutableStateOf("") }
     var progress by remember { mutableFloatStateOf(0f) }
     var statusText by remember { mutableStateOf("") }
+    var processingJob by remember { mutableStateOf<Job?>(null) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -134,8 +138,9 @@ fun MainScreen() {
 
     LaunchedEffect(selectedUri) {
         selectedUri?.let { uri ->
-            withContext(Dispatchers.Default) {
-                try {
+            processingJob = currentCoroutineContext()[Job]!!
+            try {
+                withContext(Dispatchers.Default) {
                     if (selectedType == "image") {
                         statusText = "Loading image..."
                         progress = 0.1f
@@ -180,11 +185,13 @@ fun MainScreen() {
                         progress = 1f
                         results = frames
                     }
-                    screen = Screen.Results
-                } catch (e: Exception) {
-                    errorMessage = "Failed to process media"
-                    screen = Screen.Upload
                 }
+                screen = Screen.Results
+            } catch (e: CancellationException) {
+                // processing was cancelled, ignore
+            } catch (e: Exception) {
+                errorMessage = "Failed to process media"
+                screen = Screen.Upload
             }
         }
     }
@@ -269,25 +276,39 @@ fun MainScreen() {
                     text = String.format(Locale.US, "%.0f%%", progress * 100),
                     style = MaterialTheme.typography.bodySmall
                 )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = {
+                    processingJob?.cancel()
+                    selectedUri = null
+                    screen = Screen.Upload
+                }) {
+                    Text("Cancel")
+                }
             }
         }
         is Screen.Results -> {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                results.forEach { frameResult ->
-                    FrameResultCard(frameResult)
-                    Spacer(Modifier.height(16.dp))
-                }
-                Spacer(Modifier.weight(1f))
                 Button(
                     onClick = { screen = Screen.Upload }
                 ) {
                     Text("Analyze Another")
+                }
+                Spacer(Modifier.height(16.dp))
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    results.forEach { frameResult ->
+                        FrameResultCard(frameResult)
+                        Spacer(Modifier.height(16.dp))
+                    }
                 }
             }
         }
