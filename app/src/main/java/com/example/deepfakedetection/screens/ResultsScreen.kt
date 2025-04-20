@@ -28,6 +28,8 @@ fun ResultsScreen(
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Spacer(modifier = Modifier.height(48.dp))
+
         Button(onClick = onAnalyzeAnother) {
             Text("Analyze Another")
         }
