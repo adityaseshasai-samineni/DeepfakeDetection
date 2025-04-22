@@ -66,4 +66,6 @@ dependencies {
     implementation(libs.tensorflow.lite.gpu) {
         exclude(group = "com.google.ai.edge.litert")
     }
+    // Add Select TF Ops to enable unsupported Flex ops in TFLite model
+    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.11.0")
 }
