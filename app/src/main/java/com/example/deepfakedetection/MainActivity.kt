@@ -3,8 +3,10 @@ package com.example.deepfakedetection
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.media.MediaMetadataRetriever.OPTION_CLOSEST
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -128,20 +130,25 @@ fun MainScreen() {
     LaunchedEffect(selectedUri) {
         selectedUri?.let { uri ->
             processingJob = currentCoroutineContext()[Job]!!
+            Log.d("MainActivity", "Processing media URI: $uri, type: $selectedType")
             try {
                 withContext(Dispatchers.Default) {
                     if (selectedType == "image") {
+                        Log.d("MainActivity", "Opening image input stream for URI: $uri")
                         statusText = "Loading image..."
                         progress = 0.1f
                         val bitmap = withContext(Dispatchers.IO) {
                             context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
                         } ?: throw Exception("Failed to load image")
+                        Log.d("MainActivity", "Decoded image size: ${bitmap.width}x${bitmap.height}")
                         statusText = "Processing image..."
                         progress = 0.4f
                         val scaledBitmap = withContext(Dispatchers.Default) { bitmap.scale(256, 256, filter = true) }
+                        Log.d("MainActivity", "Scaled image to 256x256")
                         val predictions = tflite?.let { interpreter ->
                             withContext(Dispatchers.Default) { runInference(interpreter, scaledBitmap) }
                         }
+                        Log.d("MainActivity", "Image inference output: ${predictions?.joinToString()}")
                         progress = 1f
                         results = listOf(
                             FrameResult(
@@ -151,26 +158,46 @@ fun MainScreen() {
                             )
                         )
                     } else {
-                        val retriever = withContext(Dispatchers.IO) {
-                            MediaMetadataRetriever().apply { setDataSource(context, uri) }
+                        Log.d("MainActivity", "Setting video data source for URI: $uri")
+                        // Open video URI via AssetFileDescriptor to set data source reliably
+                        val (retriever, afd) = withContext(Dispatchers.IO) {
+                            val afd = context.contentResolver.openAssetFileDescriptor(uri, "r")
+                                ?: throw Exception("Unable to open video URI: $uri")
+                            val retriever = MediaMetadataRetriever().apply {
+                                setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                            }
+                            Pair(retriever, afd)
                         }
                         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        Log.d("MainActivity", "Video duration: $durationMs ms")
                         val totalSeconds = (durationMs / 1000).toInt().coerceAtLeast(1)
                         val frameIndices = if (totalSeconds > 50) (0 until totalSeconds).shuffled().take(50) else (0 until totalSeconds).toList()
+                        Log.d("MainActivity", "Frame indices to process: $frameIndices")
                         val frames = mutableListOf<FrameResult>()
                         for ((idx, sec) in frameIndices.withIndex()) {
+                            Log.d("MainActivity", "Fetching frame at second: $sec")
                             statusText = "Processing frame ${idx + 1}/${frameIndices.size}"
                             progress = (idx + 1) / frameIndices.size.toFloat()
-                            val frameBitmap = withContext(Dispatchers.IO) { retriever.getFrameAtTime(sec * 1_000_000L) }
-                            frameBitmap?.let {
-                                val scaled = withContext(Dispatchers.Default) { it.scale(256, 256, filter = true) }
-                                val framePredictions = tflite?.let { interpreter ->
-                                    withContext(Dispatchers.Default) { runInference(interpreter, scaled) }
-                                }
-                                frames.add(FrameResult("Frame at ${sec + 1} sec", scaled, framePredictions?.toList()))
+                            // Extract closest frame to avoid null bitmaps
+                            val frameBitmap = withContext(Dispatchers.IO) { retriever.getFrameAtTime(sec * 1_000_000L, OPTION_CLOSEST) }
+                            if (frameBitmap == null) {
+                                Log.w("MainActivity", "Null frame at second: $sec, skipping")
+                                continue
                             }
+                            val scaled = withContext(Dispatchers.Default) { frameBitmap.scale(256, 256, filter = true) }
+                            Log.d("MainActivity", "Processed frame ${idx + 1}, scaled to 256x256")
+                            val framePredictions = tflite?.let { interpreter ->
+                                withContext(Dispatchers.Default) { runInference(interpreter, scaled) }
+                            }
+                            Log.d("MainActivity", "Frame inference output for frame ${idx + 1}: ${framePredictions?.joinToString()}")
+                            frames.add(FrameResult("Frame at ${sec + 1} sec", scaled, framePredictions?.toList()))
                         }
-                        withContext(Dispatchers.IO) { retriever.release() }
+                        Log.d("MainActivity", "Total frames processed: ${frames.size}")
+                        // Release resources
+                        withContext(Dispatchers.IO) {
+                            retriever.release()
+                            afd.close()
+                        }
                         progress = 1f
                         results = frames
                     }
@@ -179,7 +206,8 @@ fun MainScreen() {
             } catch (e: CancellationException) {
                 // processing was cancelled, ignore
             } catch (e: Exception) {
-                errorMessage = "Failed to process media"
+                Log.e("MainActivity", "Error processing media", e)
+                errorMessage = "Error processing media: ${e.localizedMessage ?: e.toString()}"
                 screen = Screen.Upload
             }
         }
@@ -216,7 +244,10 @@ data class FrameResult(
 
 fun runInference(tflite: Interpreter, bitmap: Bitmap): FloatArray {
     val inputBuffer = convertBitmapToByteBuffer(bitmap)
-    val output = Array(1) { FloatArray(5) }
+    // Dynamically retrieve number of output classes from the model
+    val outputTensor = tflite.getOutputTensor(0)
+    val numClasses = outputTensor.shape()[1]
+    val output = Array(1) { FloatArray(numClasses) }
     tflite.run(inputBuffer, output)
     return output[0]
 }
