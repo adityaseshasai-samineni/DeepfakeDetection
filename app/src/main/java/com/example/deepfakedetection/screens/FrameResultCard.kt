@@ -26,7 +26,13 @@ import java.util.Locale
 
 @Composable
 fun FrameResultCard(result: FrameResult) {
-    val labels = listOf("Real", "FE_Fake", "EFS_Fake", "FR_Fake", "FS_Fake")
+    val rawProbs = result.probabilities ?: emptyList()
+    // Determine labels and probabilities dynamically; handle binary real vs fake
+    val (labels, probs) = when (rawProbs.size) {
+        1 -> Pair(listOf("Real", "Fake"), listOf(rawProbs[0], 1f - rawProbs[0]))
+        2 -> Pair(listOf("Real", "Fake"), rawProbs)
+        else -> Pair(listOf("Real", "FE_Fake", "EFS_Fake", "FR_Fake", "FS_Fake"), rawProbs)
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -53,10 +59,11 @@ fun FrameResultCard(result: FrameResult) {
                     .clip(RoundedCornerShape(12.dp))
             )
             Spacer(Modifier.height(12.dp))
-            result.probabilities?.let { probabilitiesList -> 
+            if (probs.isNotEmpty()) {
                 Column {
-                    labels.forEachIndexed { i, label -> 
-                        val percent = (probabilitiesList.getOrNull(i) ?: 0f) * 100
+                    labels.forEachIndexed { i, label ->
+                        val value = probs.getOrNull(i) ?: 0f
+                        val percent = value * 100
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(vertical = 2.dp)
@@ -67,7 +74,7 @@ fun FrameResultCard(result: FrameResult) {
                                 modifier = Modifier.width(80.dp)
                             )
                             LinearProgressIndicator(
-                                progress = { (probabilitiesList.getOrNull(i) ?: 0f).coerceIn(0f, 1f) },
+                                progress = value.coerceIn(0f, 1f),
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(6.dp)

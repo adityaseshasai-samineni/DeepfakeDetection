@@ -74,6 +74,8 @@ fun MainScreen() {
     var progress by remember { mutableFloatStateOf(0f) }
     var statusText by remember { mutableStateOf("") }
     var processingJob by remember { mutableStateOf<Job?>(null) }
+    // Average confidence for video uploads (Real probability)
+    var videoConfidence by remember { mutableStateOf<Float?>(null) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -113,6 +115,7 @@ fun MainScreen() {
             selectedUri = it
             selectedType = "image"
             errorMessage = null
+            videoConfidence = null
             screen = Screen.Progress
         }
     }
@@ -123,6 +126,7 @@ fun MainScreen() {
             selectedUri = it
             selectedType = "video"
             errorMessage = null
+            videoConfidence = null
             screen = Screen.Progress
         }
     }
@@ -174,6 +178,7 @@ fun MainScreen() {
                         val frameIndices = if (totalSeconds > 50) (0 until totalSeconds).shuffled().take(50) else (0 until totalSeconds).toList()
                         Log.d("MainActivity", "Frame indices to process: $frameIndices")
                         val frames = mutableListOf<FrameResult>()
+                        var totalConfidence = 0f
                         for ((idx, sec) in frameIndices.withIndex()) {
                             Log.d("MainActivity", "Fetching frame at second: $sec")
                             statusText = "Processing frame ${idx + 1}/${frameIndices.size}"
@@ -190,9 +195,11 @@ fun MainScreen() {
                                 withContext(Dispatchers.Default) { runInference(interpreter, scaled) }
                             }
                             Log.d("MainActivity", "Frame inference output for frame ${idx + 1}: ${framePredictions?.joinToString()}")
+                            framePredictions?.let { totalConfidence += it[0] }
                             frames.add(FrameResult("Frame at ${sec + 1} sec", scaled, framePredictions?.toList()))
                         }
                         Log.d("MainActivity", "Total frames processed: ${frames.size}")
+                        videoConfidence = if (frames.isNotEmpty()) totalConfidence / frames.size else null
                         // Release resources
                         withContext(Dispatchers.IO) {
                             retriever.release()
@@ -231,6 +238,7 @@ fun MainScreen() {
         )
         is Screen.Results -> ResultsScreen(
             results = results,
+            videoConfidence = videoConfidence,
             onAnalyzeAnother = { screen = Screen.Upload }
         )
     }

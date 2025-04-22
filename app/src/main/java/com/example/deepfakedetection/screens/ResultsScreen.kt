@@ -14,12 +14,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
+import java.util.Locale
 import com.example.deepfakedetection.FrameResult
 import com.example.deepfakedetection.screens.FrameResultCard
 
 @Composable
 fun ResultsScreen(
     results: List<FrameResult>,
+    videoConfidence: Float?,
     onAnalyzeAnother: () -> Unit
 ) {
     Column(
@@ -29,6 +32,16 @@ fun ResultsScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(48.dp))
+
+        // Show overall video confidence if this is a video
+        videoConfidence?.let { conf ->
+            Text(
+                text = String.format(Locale.US, "Video Confidence: %.1f%%", conf * 100),
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
         Button(onClick = onAnalyzeAnother) {
             Text("Analyze Another")
