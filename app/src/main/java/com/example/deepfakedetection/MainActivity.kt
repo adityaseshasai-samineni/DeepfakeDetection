@@ -77,16 +77,27 @@ fun MainScreen() {
         withContext(Dispatchers.IO) {
             try {
                 val assetManager = context.assets
-                val modelFd = assetManager.openFd("model/efficientnet_lite_l4_model.tflite")
-                val inputStream = modelFd.createInputStream()
-                val modelBytes = inputStream.readBytes()
-                val byteBuffer = ByteBuffer.allocateDirect(modelBytes.size).apply {
-                    order(ByteOrder.nativeOrder())
-                    put(modelBytes)
+                val modelFiles = assetManager.list("model")?.toList() ?: emptyList()
+                val tfliteFile = modelFiles.find { it.endsWith(".tflite") }
+                val h5File = modelFiles.find { it.endsWith(".h5") }
+                val modelName = tfliteFile ?: h5File ?: throw Exception("No model file found")
+                val assetPath = "model/$modelName"
+                if (modelName.endsWith(".tflite")) {
+                    // load tflite model
+                    val modelFd = assetManager.openFd(assetPath)
+                    val inputStream = modelFd.createInputStream()
+                    val modelBytes = inputStream.readBytes()
+                    val byteBuffer = ByteBuffer.allocateDirect(modelBytes.size).apply {
+                        order(ByteOrder.nativeOrder())
+                        put(modelBytes)
+                    }
+                    val options = Interpreter.Options()
+                    tflite = Interpreter(byteBuffer, options)
+                    isModelLoaded = true
+                } else if (modelName.endsWith(".h5")) {
+                    // TODO: implement .h5 loading (requires TensorFlow Java APIs or conversion)
+                    errorMessage = "H5 model support not implemented"
                 }
-                val options = Interpreter.Options()
-                tflite = Interpreter(byteBuffer, options)
-                isModelLoaded = true
             } catch (e: Exception) {
                 errorMessage = "Failed to load model"
             }
